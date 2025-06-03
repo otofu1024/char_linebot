@@ -78,8 +78,20 @@ def handle_message(event):
         print("エラー: LineBotApiが初期化されていません。")
         return
 
+    # ユーザーIDを取得
+    user_id = event.source.user_id
     user_message = event.message.text # ユーザーが送信したメッセージ内容
-    reply_text = gemini.generate_response(user_message) # 簡単な応答メッセージを作成
+    
+    # ユーザーのプロフィール情報を取得
+    try:
+        profile = line_bot_api.get_profile(user_id)
+        user_name = profile.display_name
+        print(f"ユーザー名: {user_name}, メッセージ: {user_message}")
+    except Exception as e:
+        print(f"プロフィール取得エラー: {e}")
+        user_name = "お友達"  # デフォルト名
+      # ユーザー名を含めたプロンプトでGeminiに応答を生成させる（会話履歴付き）
+    reply_text = gemini.generate_response_with_history(user_message, user_name, user_id)
 
     # ユーザーにテキストメッセージを返信します
     line_bot_api.reply_message(
