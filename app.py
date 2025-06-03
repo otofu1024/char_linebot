@@ -1,7 +1,9 @@
 # 必要なライブラリをインポートします
 from flask import Flask, request, abort
+from google import genai
 import config
 import os
+import gemini
 
 # LINE Messaging API SDKをインポートします
 # もしインストールしていない場合は、ターミナルで pip install line-bot-sdk と実行してください
@@ -11,7 +13,8 @@ from linebot.models import (
     MessageEvent, TextMessage, TextSendMessage,
 )
 
-# config.py からLINE Botの認証情報を取得します
+# config.py からLINE Botの認証情報、Gemini APIキーを取得します
+GEMINI_API_KEY = config.GEMINI_API_KEY
 LINE_CHANNEL_ACCESS_TOKEN = config.LINE_CHANNEL_ACCESS_TOKEN
 LINE_CHANNEL_SECRET = config.LINE_CHANNEL_SECRET
 
@@ -76,7 +79,7 @@ def handle_message(event):
         return
 
     user_message = event.message.text # ユーザーが送信したメッセージ内容
-    reply_text = f"メッセージありがとう！「{user_message}」って言ったね！" # 簡単な応答メッセージを作成
+    reply_text = gemini.generate_response(user_message) # 簡単な応答メッセージを作成
 
     # ユーザーにテキストメッセージを返信します
     line_bot_api.reply_message(
