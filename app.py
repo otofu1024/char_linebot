@@ -90,7 +90,8 @@ def handle_message(event):
     except Exception as e:
         print(f"プロフィール取得エラー: {e}")
         user_name = "お友達"  # デフォルト名
-      # ユーザー名を含めたプロンプトでGeminiに応答を生成させる（会話履歴付き）
+    
+    # ユーザー名を含めたプロンプトでGeminiに応答を生成させる（会話履歴付き）
     reply_text = gemini.generate_response_with_history(user_message, user_name, user_id)
 
     # ユーザーにテキストメッセージを返信します
