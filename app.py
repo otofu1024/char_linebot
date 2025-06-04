@@ -1,16 +1,28 @@
 # 必要なライブラリをインポートします
 from flask import Flask, request, abort
-from google import genai
+# from google import genai # gemini.py でインポートしているのでここでは不要かも
 import config
 import os
 import gemini
+import json # JSONをパースするためにインポート
 
-# LINE Messaging API SDKをインポートします
-# もしインストールしていない場合は、ターミナルで pip install line-bot-sdk と実行してください
-from linebot import LineBotApi, WebhookHandler # line_bot_sdk ではなく linebot
-from linebot.exceptions import InvalidSignatureError
-from linebot.models import (
-    MessageEvent, TextMessage, TextSendMessage,
+# LINE Messaging API SDK v3 をインポートします
+from linebot.v3 import (
+    WebhookHandler
+)
+from linebot.v3.exceptions import (
+    InvalidSignatureError
+)
+from linebot.v3.webhooks import (
+    MessageEvent,
+    TextMessageContent # TextMessage ではなく TextMessageContent
+)
+from linebot.v3.messaging import (
+    Configuration,
+    ApiClient,
+    MessagingApi,
+    ReplyMessageRequest,
+    TextMessage as V3TextMessage # 送信用のTextMessage
 )
 
 # config.py からLINE Botの認証情報、Gemini APIキーを取得します
@@ -21,34 +33,27 @@ LINE_CHANNEL_SECRET = config.LINE_CHANNEL_SECRET
 # Flaskアプリケーションのインスタンスを作成します
 app = Flask(__name__)
 
-# 環境変数からチャネルアクセストークンとチャネルシークレットを取得します
-# これらはLINE Developersコンソールで確認できます
-# セキュリティのため、直接コードに書き込むのではなく、環境変数に設定することを推奨します
-# ローカルでテストする際は、これらの値を直接文字列として代入しても動作しますが、
-# 公開するサーバーでは必ず環境変数を使用してください。
-
-# LINE Bot APIとWebhookHandlerのインスタンスを作成します
-# LINE_CHANNEL_ACCESS_TOKEN や LINE_CHANNEL_SECRET が None の場合、エラーになります。
-# 実行前に環境変数が正しく設定されているか確認してください。
+# LINE Bot API v3 の設定
 if not LINE_CHANNEL_ACCESS_TOKEN or not LINE_CHANNEL_SECRET:
     print("エラー: LINE_CHANNEL_ACCESS_TOKEN または LINE_CHANNEL_SECRET が設定されていません。")
-    print("変数を確認してください。")
-    # ここでプログラムを終了させるか、デフォルト値を設定するなどの処理が必要です。
-    # このサンプルでは、簡単のためこのまま進めますが、実際にはエラー処理をしっかり行いましょう。
-    line_bot_api = None
+    print("config.py の変数を確認してください。")
+    messaging_api = None
     handler = None
 else:
-    line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
+    configuration = Configuration(access_token=LINE_CHANNEL_ACCESS_TOKEN)
+    # ApiClient のインスタンス化
+    api_client_instance = ApiClient(configuration)
+    # MessagingApi のインスタンス化
+    messaging_api = MessagingApi(api_client_instance)
     handler = WebhookHandler(LINE_CHANNEL_SECRET)
 
 
 # '/webhook' というURLパスにPOSTリクエストが来たときの処理を定義します
-# このURLはLINE DevelopersコンソールのWebhook URLに設定します
 @app.route("/webhook", methods=['POST'])
 def callback():
     if not handler:
-        print("エラー: WebhookHandlerが初期化されていません。")
-        abort(500) # サーバー内部エラー
+        app.logger.error("エラー: WebhookHandlerが初期化されていません。")
+        abort(500)
         return 'Internal Server Error'
 
     # リクエストヘッダーから署名を取得します
@@ -60,52 +65,97 @@ def callback():
 
     # 署名を検証し、問題なければイベントを処理します
     try:
-        handler.handle(body, signature)
+        # ★★★ handle_message に body も渡すように変更 ★★★
+        events = handler.parser.parse(body, signature)
+        for event in events:
+            if isinstance(event, MessageEvent) and isinstance(event.message, TextMessageContent):
+                handle_message(event, body) # body を渡す
+            # 他のイベントタイプも必要に応じて処理
+            # elif isinstance(event, FollowEvent):
+            #     handle_follow(event)
+            # elif ...
+
     except InvalidSignatureError:
-        print("無効な署名です。リクエストがLINEプラットフォームから来たものか確認してください。")
+        app.logger.error("無効な署名です。リクエストがLINEプラットフォームから来たものか確認してください。")
         abort(400) # 不正なリクエスト
     except Exception as e:
-        print(f"イベント処理中にエラーが発生しました: {e}")
+        app.logger.error(f"イベント処理のディスパッチ中にエラーが発生しました: {e}", exc_info=True)
         abort(500) # サーバー内部エラー
 
     return 'OK' # LINEプラットフォームに処理が正常に完了したことを伝えます
 
 
 # テキストメッセージイベントを処理するハンドラを定義します
-@handler.add(MessageEvent, message=TextMessage)
-def handle_message(event):
-    if not line_bot_api:
-        print("エラー: LineBotApiが初期化されていません。")
+# ★★★ handle_message の引数に body を追加 ★★★
+def handle_message(event: MessageEvent, request_body_str: str):
+    if not messaging_api:
+        app.logger.error("エラー: MessagingApiが初期化されていません。")
         return
 
-    # ユーザーIDを取得
-    user_id = event.source.user_id
-    user_message = event.message.text # ユーザーが送信したメッセージ内容
-    
-    # ユーザーのプロフィール情報を取得
+    user_id = event.source.user_id if event.source else None
+    if not user_id:
+        app.logger.error("ユーザーIDが取得できませんでした。")
+        return
+
+    user_message = event.message.text
+    message_id = event.message.id
+    print(f"message_id: {message_id}")
+    group_id = event.source.group_id if event.source and event.source.type == 'group' else None
+
+    quoted_id = None
     try:
-        profile = line_bot_api.get_profile(user_id)
-        user_name = profile.display_name
-        print(f"ユーザー名: {user_name}, メッセージ: {user_message}")
+        # Webhookで受け取った生のJSON文字列(request_body_str)をパースして直接参照する
+        webhook_data = json.loads(request_body_str)
+        # 現在処理しているイベントに対応するデータを特定する
+        # (複数のイベントが一度に来る可能性があるため、replyTokenで照合するのが確実)
+        current_event_data = None
+        for ev_data in webhook_data.get('events', []):
+            if ev_data.get('replyToken') == event.reply_token:
+                current_event_data = ev_data
+                break
+        
+        if current_event_data and 'message' in current_event_data and 'quotedMessageId' in current_event_data['message']:
+            quoted_id = current_event_data['message']['quotedMessageId']
+        else:
+            app.logger.info("リクエストボディのイベントデータに quotedMessageId が見つかりませんでした。")
+            # SDKのオブジェクトからも試みる (フォールバックまたはデバッグ用)
+            if hasattr(event.message, 'quote_token') and event.message.quote_token: # v3では quote_token がある
+                app.logger.info(f"event.message.quote_token が存在します: {event.message.quote_token}")
+                # quote_token から quotedMessageId を取得する直接的なAPIはSDKにはない
+                # もしSDKの将来のバージョンで event.message.quoted_message_id のような属性が追加されたらそれを使う
+
+    except json.JSONDecodeError:
+        app.logger.error("リクエストボディのJSONパースに失敗しました（quoted_id取得時）。")
     except Exception as e:
-        print(f"プロフィール取得エラー: {e}")
-        user_name = "お友達"  # デフォルト名
+        app.logger.error(f"quoted_id の取得中に予期せぬエラー: {e}", exc_info=True)
+
+    app.logger.info(f"最終的に取得した quoted_id: {quoted_id}")
+
+    user_name = "お友達" # デフォルト名
+    try:
+        # v3 SDK でのプロフィール取得
+        profile_response = messaging_api.get_profile(user_id)
+        user_name = profile_response.display_name
+        app.logger.info(f"ユーザー名: {user_name}, メッセージ: {user_message}")
+    except Exception as e:
+        app.logger.error(f"プロフィール取得エラー: {e}", exc_info=True)
     
     # ユーザー名を含めたプロンプトでGeminiに応答を生成させる（会話履歴付き）
-    reply_text = gemini.generate_response_with_history(user_message, user_name, user_id)
+    reply_text = gemini.generate_response_with_history(user_message, user_name, user_id, message_id, group_id, quoted_id)
 
-    # ユーザーにテキストメッセージを返信します
-    line_bot_api.reply_message(
-        event.reply_token,
-        TextSendMessage(text=reply_text))
+    # ユーザーにテキストメッセージを返信します (v3 SDK)
+    try:
+        messaging_api.reply_message(
+            ReplyMessageRequest(
+                reply_token=event.reply_token,
+                messages=[V3TextMessage(text=reply_text)]
+            )
+        )
+    except Exception as e:
+        app.logger.error(f"メッセージの返信中にエラー: {e}", exc_info=True)
 
 
 # このスクリプトが直接実行された場合にサーバーを起動します
 if __name__ == "__main__":
-    
-    # ポート番号は環境変数 PORT があればそれを使用し、なければデフォルトで5000番を使用します
-    # HerokuなどのPaaS環境では、PORT環境変数が自動的に設定されることが多いです
     port = int(os.environ.get("PORT", 5000))
-    # 開発中は debug=True にすると、コード変更時に自動でリロードされたり、エラー表示が詳細になったりして便利です。
-    # 本番環境では debug=False にしてください。
     app.run(host="0.0.0.0", port=port, debug=True)
