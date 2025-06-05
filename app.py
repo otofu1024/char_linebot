@@ -4,7 +4,11 @@ from flask import Flask, request, abort
 import config
 import os
 import gemini
-import json # JSONをパースするためにインポート
+import json
+import requests
+import datetime
+import jma_weather_api
+
 
 # LINE Messaging API SDK v3 をインポートします
 from linebot.v3 import (
@@ -131,7 +135,7 @@ def handle_message(event: MessageEvent, request_body_str: str):
 
     app.logger.info(f"最終的に取得した quoted_id: {quoted_id}")
 
-    user_name = "お友達" # デフォルト名
+    user_name = "カミーユ" # デフォルト名
     try:
         # v3 SDK でのプロフィール取得
         profile_response = messaging_api.get_profile(user_id)
@@ -143,16 +147,35 @@ def handle_message(event: MessageEvent, request_body_str: str):
     # ユーザー名を含めたプロンプトでGeminiに応答を生成させる（会話履歴付き）
     reply_text = gemini.generate_response_with_history(user_message, user_name, user_id, message_id, group_id, quoted_id)
 
-    # ユーザーにテキストメッセージを返信します (v3 SDK)
-    try:
-        messaging_api.reply_message(
-            ReplyMessageRequest(
-                reply_token=event.reply_token,
-                messages=[V3TextMessage(text=reply_text)]
+    if "天気" in user_message:
+        # 天気情報を取得
+        city_number = "140010" # 神奈川のシティコード
+        if "明日" in user_message:
+            reply_text = gemini.generate_weather_response(1, city_number)  # 明日の天気
+        elif "明後日" in user_message:
+            reply_text = gemini.generate_weather_response(2, city_number)  # 明後日の天気
+        else:
+            reply_text = gemini.generate_weather_response(0, city_number)
+        try:
+            messaging_api.reply_message(
+                ReplyMessageRequest(
+                    reply_token=event.reply_token,
+                    messages=[V3TextMessage(text=reply_text)]
+                )
             )
-        )
-    except Exception as e:
-        app.logger.error(f"メッセージの返信中にエラー: {e}", exc_info=True)
+        except Exception as e:
+            app.logger.error(f"天気情報の返信中にエラー: {e}", exc_info=True)
+    else:
+        # ユーザーにテキストメッセージを返信します (v3 SDK)
+        try:
+            messaging_api.reply_message(
+                ReplyMessageRequest(
+                    reply_token=event.reply_token,
+                    messages=[V3TextMessage(text=reply_text)]
+                )
+            )
+        except Exception as e:
+            app.logger.error(f"メッセージの返信中にエラー: {e}", exc_info=True)
 
 
 # このスクリプトが直接実行された場合にサーバーを起動します
