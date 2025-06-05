@@ -3,13 +3,84 @@ from google.genai import types
 import config
 import json
 import os
-from datetime import datetime
+from datetime import datetime, time
 import requests
 import jma_weather_api
 
 GEMINI_API_KEY = config.GEMINI_API_KEY
 
 client = genai.Client(api_key = GEMINI_API_KEY)
+
+def generate_curriculum_response():
+    """
+    カリキュラム情報を生成する
+    """
+    now = datetime.now()
+    weekdays_japanese = ["月曜日", "火曜日", "水曜日", "木曜日", "金曜日", "土曜日", "日曜日"]
+    day_of_week_index = now.weekday()
+    day_of_week_japanese = weekdays_japanese[day_of_week_index]
+    print(f"今日の日付: {now.strftime('%Y-%m-%d')},  曜日: {day_of_week_japanese}")
+
+    current_time = now.time()
+    print(f"現在の時刻: {current_time}")
+    
+    try:
+        with open("curriculum.json", "r", encoding="utf-8") as f:
+            curriculum = json.load(f)
+        with open(f"systempro.txt", "r", encoding="utf-8") as f:
+            personalized_instruction = f.read()
+        
+        todays_curriculum = curriculum["schedule"].get(day_of_week_japanese, [])
+        
+        if not todays_curriculum:
+            print("今日は授業がありません。")
+            personalized_instruction += f"今日は授業がないようです。"
+        else:
+            remaining_classes = []
+            for lecture in todays_curriculum:
+                # 授業終了時刻をtimeオブジェクトに変換
+                # lecture["time_end"] は "HH:MM" 形式と仮定
+                try:
+                    end_time_parts = list(map(int, lecture["time_end"].split(':')))
+                    lecture_end_time = time(end_time_parts[0], end_time_parts[1])
+
+                    # 現在時刻が授業終了時刻より前の場合、残りの授業とする
+                    if current_time < lecture_end_time:
+                        remaining_classes.append(lecture)
+                except ValueError:
+                    print(f"警告: 授業 '{lecture['subject']}' の時刻形式が無効です: {lecture['time_end']}")
+                    continue # この授業をスキップして次に進む
+
+            if remaining_classes:
+                personalized_instruction += "今日の残りの授業:"
+                for lecture in remaining_classes:
+                    period_info = f"{lecture['period']}限"
+                    location_info = lecture['location_or_detail'] if lecture['location_or_detail'] else "未定/オンラインなど"
+                    personalized_instruction += f"\n  - 授業名: {lecture['subject']}"
+                    personalized_instruction += f"\n    時限: {period_info}"
+                    personalized_instruction += f"\n    場所/詳細: {location_info}"
+                    personalized_instruction += f"\n    時間: {lecture['time_start']} - {lecture['time_end']}"
+                    personalized_instruction += "\n" + "-" * 20 # 区切り線
+            else:
+                personalized_instruction += "今日の授業はすべて終了しました。"
+
+
+        
+        personalized_instruction += f"\n\n{todays_curriculum}"
+        response = client.models.generate_content(
+            model='gemini-2.5-flash-preview-05-20',
+            contents=f"今は{current_time}です。残りの授業（授業名、開講場所について）をシャアらしく教えてください。",
+            config=types.GenerateContentConfig(
+                system_instruction=personalized_instruction,
+                top_p= 0.7,
+                temperature= 0.7,
+                response_mime_type='text/plain'
+            ),
+        )
+        return response.text
+        
+    except Exception as e:
+        return f"カリキュラム情報の取得に失敗しました: {e}"
 
 def generate_weather_response(day, city):
     """
@@ -151,10 +222,8 @@ def format_conversation_context(history):
 
 if __name__ == '__main__':
     # 会話履歴機能のテスト
-    print("=== 会話履歴機能のテスト ===")
-    test_user_id = "test_user_123"
-    test_user_name = "太郎くん"
-    
-    response1 = generate_response_with_history("こんにちは、トモさん！", test_user_name, test_user_id)
-    print(f"太郎くん: こんにちは、トモさん！")
-    print(f"トモさん: {response1}")
+
+    # カリキュラムのテスト
+    print("\n=== カリキュラム情報のテスト ===")
+    curriculum_response = generate_curriculum_response()
+    print(f"トモさん: {curriculum_response}")

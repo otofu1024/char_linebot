@@ -165,6 +165,18 @@ def handle_message(event: MessageEvent, request_body_str: str):
             )
         except Exception as e:
             app.logger.error(f"天気情報の返信中にエラー: {e}", exc_info=True)
+    elif "授業" in user_message or "時間割" in user_message or "シラバス" in user_message:
+        # カリキュラム情報を取得
+        reply_text = gemini.generate_curriculum_response()
+        try:
+            messaging_api.reply_message(
+                ReplyMessageRequest(
+                    reply_token=event.reply_token,
+                    messages=[V3TextMessage(text=reply_text)]
+                )
+            )
+        except Exception as e:
+            app.logger.error(f"カリキュラム情報の返信中にエラー: {e}", exc_info=True)
     else:
         # ユーザーにテキストメッセージを返信します (v3 SDK)
         try:
