@@ -143,9 +143,6 @@ def handle_message(event: MessageEvent, request_body_str: str):
         app.logger.info(f"ユーザー名: {user_name}, メッセージ: {user_message}")
     except Exception as e:
         app.logger.error(f"プロフィール取得エラー: {e}", exc_info=True)
-    
-    # ユーザー名を含めたプロンプトでGeminiに応答を生成させる（会話履歴付き）
-    reply_text = gemini.generate_response_with_history(user_message, user_name, user_id, message_id, group_id, quoted_id)
 
     if "天気" in user_message:
         # 天気情報を取得
@@ -180,6 +177,7 @@ def handle_message(event: MessageEvent, request_body_str: str):
     else:
         # ユーザーにテキストメッセージを返信します (v3 SDK)
         try:
+            reply_text = gemini.generate_response_with_history(user_message, user_name, user_id, message_id, group_id, quoted_id)
             messaging_api.reply_message(
                 ReplyMessageRequest(
                     reply_token=event.reply_token,

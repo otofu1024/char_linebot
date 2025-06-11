@@ -94,7 +94,7 @@ def generate_weather_response(day, city):
 
         response = client.models.generate_content(
             model='gemini-2.5-flash-preview-05-20',
-            contents="以下の天気情報をシャアらしく教えてください。",
+            contents="以下の天気情報を教えてください。",
             config=types.GenerateContentConfig(
                 system_instruction=personalized_instruction,
                 top_p= 0.7,
